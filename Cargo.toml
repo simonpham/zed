@@ -75,6 +75,7 @@ members = [
     "crates/fs_benchmarks",
     "crates/fsevent",
     "crates/fuzzy",
+    "crates/flutter",
     "crates/git",
     "crates/git_hosting_providers",
     "crates/git_ui",
@@ -300,6 +301,7 @@ feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
+flutter = { path = "crates/flutter" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }

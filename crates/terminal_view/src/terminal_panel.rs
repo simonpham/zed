@@ -112,6 +112,18 @@ impl TerminalPanel {
         terminal_panel
     }
 
+    pub fn terminals(&self, cx: &App) -> Vec<Entity<Terminal>> {
+        let mut terminals = Vec::new();
+        for pane in self.center.panes() {
+            for item in pane.read(cx).items() {
+                if let Some(terminal_view) = item.downcast::<TerminalView>() {
+                   terminals.push(terminal_view.read(cx).terminal().clone());
+                }
+            }
+        }
+        terminals
+    }
+
     pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.assistant_enabled = enabled;
         if enabled {

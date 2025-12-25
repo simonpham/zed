@@ -6282,6 +6282,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "flutter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-tungstenite",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "project",
+ "serde",
+ "serde_json",
+ "smol",
+ "task",
+ "terminal",
+ "terminal_view",
+ "url",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16890,9 +16912,12 @@ dependencies = [
  "rpc",
  "schemars",
  "serde",
+ "serde_json",
  "settings",
  "smallvec",
  "story",
+ "tab_switcher",
+ "task",
  "telemetry",
  "theme",
  "tree-sitter-md",
@@ -20699,6 +20724,7 @@ dependencies = [
  "feature_flags",
  "feedback",
  "file_finder",
+ "flutter",
  "fs",
  "futures 0.3.31",
  "git",

@@ -898,6 +898,13 @@ impl TaskStatus {
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
 
 impl Terminal {
+    pub fn process_info(&self) -> Option<&PtyProcessInfo> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => Some(info),
+            _ => None,
+        }
+    }
+
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
