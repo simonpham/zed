@@ -136,7 +136,10 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
+    flutter_controls: Option<Entity<flutter_ui::FlutterControls>>,
 }
+
+mod flutter_ui;
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -149,6 +152,7 @@ impl Render for TitleBar {
         children.push(
             h_flex()
                 .gap_1()
+                // ...
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
@@ -201,6 +205,7 @@ impl Render for TitleBar {
                 })
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(self.render_flutter_controls(window, cx))
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
@@ -250,6 +255,35 @@ impl Render for TitleBar {
 }
 
 impl TitleBar {
+
+    fn check_flutter_project(&mut self, cx: &mut Context<Self>) {
+         let is_flutter = self.project.read(cx).worktrees(cx).any(|worktree| {
+             let worktree = worktree.read(cx);
+              worktree.root_entry().map_or(false, |_root| {
+                  worktree.abs_path().join("pubspec.yaml").exists()
+              })
+         });
+
+         if is_flutter {
+             if self.flutter_controls.is_none() {
+                 let flutter_controls = cx.new(|cx| flutter_ui::FlutterControls::new(self.project.clone(), cx));
+                 self.flutter_controls = Some(flutter_controls);
+                 cx.notify();
+             }
+         } else {
+             if self.flutter_controls.is_some() {
+                 self.flutter_controls = None;
+                 cx.notify();
+             }
+         }
+    }
+
+    fn render_flutter_controls(&self, _window: &mut Window, _cx: &mut Context<Self>) -> impl Iterator<Item = AnyElement> {
+         self.flutter_controls.iter().map(|controls| {
+              controls.clone().into_any_element()
+         })
+    }
+
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
@@ -316,7 +350,7 @@ impl TitleBar {
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
-        Self {
+        let mut title_bar = Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
@@ -326,7 +360,10 @@ impl TitleBar {
             _subscriptions: subscriptions,
             banner,
             screen_share_popover_handle: PopoverMenuHandle::default(),
-        }
+            flutter_controls: None,
+        };
+        title_bar.check_flutter_project(cx);
+        title_bar
     }
 
     fn project_name(&self, cx: &Context<Self>) -> Option<SharedString> {

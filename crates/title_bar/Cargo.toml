@@ -45,8 +45,11 @@ rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
+tab_switcher.workspace = true
+task.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
