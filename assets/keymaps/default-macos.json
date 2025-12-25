@@ -578,7 +578,6 @@
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
-      "cmd-\\": "pane::SplitRight",
     },
   },
   {
@@ -712,6 +711,8 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+      "cmd-\\": "flutter::HotReload",
+      "cmd-shift-\\": "flutter::HotRestart",
     },
   },
   {
