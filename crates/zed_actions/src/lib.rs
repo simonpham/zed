@@ -601,3 +601,24 @@ pub mod wsl_actions {
         pub create_new_window: bool,
     }
 }
+
+pub mod flutter {
+    use gpui::{actions, Action};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    actions!(flutter, [HotReload, HotRestart]);
+
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = flutter)]
+    #[serde(deny_unknown_fields)]
+    pub struct FlutterRun {
+        #[serde(default)]
+        pub device_id: Option<String>,
+        #[serde(default)]
+        pub target: Option<String>,
+        #[serde(default)]
+        pub cwd: Option<String>,
+    }
+}
+
