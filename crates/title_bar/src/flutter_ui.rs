@@ -235,9 +235,7 @@ impl Render for FlutterControls {
                 PopoverMenu::new("device-picker")
                     .trigger(
                         Button::new("device-picker-trigger", device_name)
-                            .style(ButtonStyle::Subtle)
-                            .icon(IconName::Server)
-                            .icon_size(IconSize::Small),
+                            .style(ButtonStyle::Subtle),
                     )
                     .menu(move |window, cx| {
                         let devices = devices.clone();
@@ -269,15 +267,16 @@ impl Render for FlutterControls {
                     })
             })
             .child({
-                let target_name = target_name.clone();
+                let target_name = std::path::Path::new(&target_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or_else(|| target_name.clone(), |s| s.to_string());
                 let targets = self.targets.clone();
                 let this = this.clone();
                 PopoverMenu::new("target-picker")
                     .trigger(
                         Button::new("target-picker-trigger", target_name)
-                            .style(ButtonStyle::Subtle)
-                            .icon(IconName::File)
-                            .icon_size(IconSize::Small),
+                            .style(ButtonStyle::Subtle),
                     )
                     .menu(move |window, cx| {
                         let targets = targets.clone();
