@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
+ui.workspace = true
 workspace.workspace = true
 project.workspace = true
 terminal_view.workspace = true
@@ -25,7 +26,11 @@ anyhow.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-async-tungstenite.workspace = true
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-runtime"] }
 futures.workspace = true
 smol.workspace = true
 url.workspace = true
+regex.workspace = true
+gpui_tokio.workspace = true
+tokio.workspace = true
+chrono.workspace = true
