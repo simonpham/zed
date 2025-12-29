@@ -1,20 +1,30 @@
 use util::ResultExt;
 use gpui::{
-    div, list, AnyElement, App, Context, EventEmitter, InteractiveElement, IntoElement,
-    ListAlignment, ListState, ParentElement, Render, Styled, Task,
-    WeakEntity, Window, px,
+    div, App, Context, EventEmitter, IntoElement,
+    ParentElement, Render, Styled, Task,
+    WeakEntity, Window,
 };
 use ui::prelude::*;
-use ui::{Checkbox, IconButton, IconName, IconSize, Tooltip};
+use ui::{Checkbox, IconButton, IconName, IconSize, Tooltip, ToggleState};
 use workspace::dock::{Panel, PanelEvent, DockPosition};
-use zed_actions::flutter::OpenFlutterLogs;
+use zed_actions::flutter::{OpenFlutterLogs, HotReload, HotRestart};
 use workspace::Workspace;
 use crate::vm_service::DartVmService;
+use editor::{Editor, EditorEvent, Inlay, InlayContent};
+use project::InlayId;
+use editor::scroll::Autoscroll;
+use multi_buffer::{MultiBuffer, MultiBufferOffset};
+use editor::ToPoint;
+use gpui::{Action, Entity, HighlightStyle};
+use language::language_settings::SoftWrap;
+use text::{Rope, Bias};
 
 pub struct FlutterLogPanel {
     workspace: WeakEntity<Workspace>,
-    logs: Vec<LogEntry>,
-    list_state: ListState,
+    editor: Entity<Editor>,
+    metadata: Vec<Option<LogMetadata>>,
+    next_inlay_id: usize,
+    active_timestamp_inlay: Option<InlayId>,
     connection_task: Option<Task<()>>,
     focus_handle: gpui::FocusHandle,
     vm_service_uri: Option<String>,
@@ -23,24 +33,54 @@ pub struct FlutterLogPanel {
     dock_position: DockPosition,
     manual_search_path: Option<std::path::PathBuf>,
     auto_scroll: bool,
+    fine_ranges: Vec<std::ops::Range<editor::Anchor>>,
+    info_ranges: Vec<std::ops::Range<editor::Anchor>>,
+    warning_ranges: Vec<std::ops::Range<editor::Anchor>>,
+    severe_ranges: Vec<std::ops::Range<editor::Anchor>>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 #[derive(Clone)]
-struct LogEntry {
-    timestamp: chrono::DateTime<chrono::Local>,
-    level: String,
-    message: String,
+struct LogMetadata {
+    timestamp: String,
+    logger_name: Option<String>,
 }
 
-impl FlutterLogPanel {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
-        let weak_workspace = workspace.weak_handle();
-        let list_state = ListState::new(0, ListAlignment::Top, px(1000.));
+struct FineLog;
+struct InfoLog;
+struct WarningLog;
+struct SevereLog;
 
-        let this = Self {
+impl FlutterLogPanel {
+    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let weak_workspace = workspace.weak_handle();
+        
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::multi_line(window, cx);
+            editor.set_read_only(true);
+            editor.set_show_gutter(false, cx);
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.set_placeholder_text("Flutter logs will appear here...", window, cx);
+            editor
+        });
+
+
+        let mut _subscriptions = Vec::new();
+        _subscriptions.push(cx.subscribe(&editor, |this, editor, event, cx| {
+            match event {
+                EditorEvent::SelectionsChanged { .. } => {
+                    this.update_timestamp_inlay(&editor, cx);
+                }
+                _ => {}
+            }
+        }));
+
+        Self {
             workspace: weak_workspace,
-            logs: Vec::new(),
-            list_state,
+            editor,
+            metadata: Vec::new(),
+            next_inlay_id: 0,
+            active_timestamp_inlay: None,
             connection_task: None,
             focus_handle: cx.focus_handle(),
             vm_service_uri: None,
@@ -49,8 +89,59 @@ impl FlutterLogPanel {
             dock_position: DockPosition::Bottom,
             manual_search_path: None,
             auto_scroll: true,
+            fine_ranges: Vec::new(),
+            info_ranges: Vec::new(),
+            warning_ranges: Vec::new(),
+            severe_ranges: Vec::new(),
+            _subscriptions,
+        }
+    }
+
+    fn update_timestamp_inlay(&mut self, editor: &Entity<Editor>, cx: &mut Context<Self>) {
+        let result = editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let selections = editor.selections.all::<MultiBufferOffset>(&snapshot);
+            let selection = selections.first()?;
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let point = selection.head().to_point(&buffer);
+            let row = point.row;
+            
+            let meta = self.metadata.get(row as usize)?.as_ref()?;
+            Some((row, meta.timestamp.clone()))
+        });
+
+        let (row, timestamp) = match result {
+            Some((r, t)) => (r, t),
+            None => {
+                if let Some(id) = self.active_timestamp_inlay.take() {
+                    editor.update(cx, |editor, cx| {
+                        editor.splice_inlays(&[id], Vec::new(), cx);
+                    });
+                }
+                return;
+            }
         };
-        this
+
+        editor.update(cx, |editor, cx| {
+            let mut to_remove = Vec::new();
+            if let Some(id) = self.active_timestamp_inlay {
+                to_remove.push(id);
+            }
+
+            let id = InlayId::LogTimestamp(self.next_inlay_id);
+            self.next_inlay_id += 1;
+            self.active_timestamp_inlay = Some(id);
+
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let line_len = buffer.line_len(multi_buffer::MultiBufferRow(row));
+            let position = buffer.anchor_at(multi_buffer::MultiBufferPoint::new(row, line_len), Bias::Right);
+
+            editor.splice_inlays(&to_remove, vec![Inlay {
+                id,
+                position,
+                content: InlayContent::Text(Rope::from(timestamp.clone())),
+            }], cx);
+        });
     }
 
     pub fn connect(&mut self, cx: &mut Context<Self>) {
@@ -126,7 +217,7 @@ impl FlutterLogPanel {
                                                     if attempts % 5 == 0 { 
                                                          if let Some(view) = weak_view.upgrade() {
                                                              view.update(&mut cx, |view, cx| {
-                                                                 view.add_log(format!("Connection failed to {}: {}", ws_uri, e), "ERROR", cx);
+                                                                 view.add_log(format!("Connection failed to {}: {}", ws_uri, e), "ERROR", None, cx);
                                                              }).log_err();
                                                          }
                                                     }
@@ -134,7 +225,7 @@ impl FlutterLogPanel {
                                                 Err(e) => {
                                                      if let Some(view) = weak_view.upgrade() {
                                                          view.update(&mut cx, |view, cx| {
-                                                             view.add_log(format!("Connection task failed: {}", e), "ERROR", cx);
+                                                             view.add_log(format!("Connection task failed: {}", e), "ERROR", None, cx);
                                                          }).log_err();
                                                      }
                                                 }
@@ -143,7 +234,7 @@ impl FlutterLogPanel {
                                                 if attempts == 0 {
                                                      if let Some(view) = weak_view.upgrade() {
                                                          view.update(&mut cx, |view, cx| {
-                                                             view.add_log(format!("Failed to spawn connection task: {}", e), "ERROR", cx);
+                                                             view.add_log(format!("Failed to spawn connection task: {}", e), "ERROR", None, cx);
                                                          }).log_err();
                                                      }
                                                 }
@@ -158,22 +249,22 @@ impl FlutterLogPanel {
                         }
                     } else {
                          this.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
-                            view.add_log("No workspace available".to_string(), "WARNING", cx);
+                            view.add_log("No workspace available".to_string(), "WARNING", None, cx);
                         }).ok();
                     }
 
                     attempts += 1;
                     if attempts > 60 { // 30 seconds
                          this.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
-                            view.add_log("Could not link to running Flutter app (connection timed out).".to_string(), "ERROR", cx);
-                             view.add_log("Please ensure 'flutter run' is active and '.dart_tool/flutter_url' exists.".to_string(), "ERROR", cx);
+                            view.add_log("Could not link to running Flutter app (connection timed out).".to_string(), "ERROR", None, cx);
+                             view.add_log("Please ensure 'flutter run' is active and '.dart_tool/flutter_url' exists.".to_string(), "ERROR", None, cx);
                         }).ok();
                         break;
                     }
 
                     if attempts == 1 {
                         this.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
-                            view.add_log("Waiting for Flutter app to start...".to_string(), "INFO", cx);
+                            view.add_log("Waiting for Flutter app to start...".to_string(), "INFO", None, cx);
                         }).ok();
                     }
 
@@ -224,15 +315,16 @@ impl FlutterLogPanel {
                         if let Some(view) = weak_view.upgrade() {
                             let _ = view.update::<(), gpui::AsyncApp>(&mut cx_root, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
                                 match event {
-                                    LogEvent::Connected => view.add_log("Connected to Dart VM Service".to_string(), "INFO", cx),
-                                    LogEvent::Subscribed => view.add_log("Subscribed to Logging stream".to_string(), "INFO", cx),
-                                    LogEvent::Disconnected => view.add_log("Disconnected from VM Service".to_string(), "INFO", cx),
-                                    LogEvent::Error(msg) => view.add_log(msg, "ERROR", cx),
+                                    LogEvent::Connected => view.add_log("Connected to Dart VM Service".to_string(), "INFO", None, cx),
+                                    LogEvent::Subscribed => view.add_log("Subscribed to Logging stream".to_string(), "INFO", None, cx),
+                                    LogEvent::Disconnected => view.add_log("Disconnected from VM Service".to_string(), "INFO", None, cx),
+                                    LogEvent::Error(msg) => view.add_log(msg, "ERROR", None, cx),
                                     LogEvent::Log(record) => {
                                         let message = record.message
                                             .and_then(|m| m.value_as_string)
                                             .unwrap_or_else(|| "<no message>".to_string());
                                         let level = record.level.unwrap_or(0);
+                                        let logger_name = record.logger_name.and_then(|m| m.value_as_string);
                                         let level_str = match level {
                                             0..=500 => "FINE",
                                             501..=800 => "INFO",
@@ -240,7 +332,7 @@ impl FlutterLogPanel {
                                             901..=1000 => "SEVERE",
                                             _ => "SHOUT",
                                         };
-                                        view.add_log(message, level_str, cx);
+                                        view.add_log(message, level_str, logger_name, cx);
                                     }
                                 }
                             });
@@ -255,83 +347,139 @@ impl FlutterLogPanel {
         }));
     }
 
-    fn add_log(&mut self, message: String, level: &str, cx: &mut Context<Self>) {
-        let entry = LogEntry {
-            timestamp: chrono::Local::now(),
-            level: level.to_string(),
-            message,
-        };
-        let old_len = self.logs.len();
-        self.logs.push(entry);
-        self.list_state.splice(old_len..old_len, 1);
+    pub fn add_log(&mut self, message: String, level: &str, logger_name: Option<String>, cx: &mut Context<Self>) {
+        let timestamp_str = chrono::Local::now().format("%H:%M:%S").to_string();
+        let lines: Vec<&str> = message.trim_end_matches('\n').split('\n').collect();
+
+        for (i, line) in lines.iter().enumerate() {
+            let meta = if i == 0 {
+                Some(LogMetadata {
+                    timestamp: timestamp_str.clone(),
+                    logger_name: logger_name.clone(),
+                })
+            } else {
+                None
+            };
+            self.metadata.push(meta.clone());
+
+            let log_line = format!("{}\n", line);
+            let editor = self.editor.clone();
+            editor.update(cx, |editor: &mut Editor, cx| {
+                let (start, end) = editor.buffer().update(cx, |buffer: &mut MultiBuffer, cx| {
+                    let start = buffer.len(cx);
+                    buffer.edit([(start..start, log_line.clone())], None, cx);
+                    let end = buffer.len(cx);
+                    (start, end)
+                });
+
+                let buffer = editor.buffer().read(cx);
+                let snapshot = buffer.snapshot(cx);
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+
+                // Highlight based on level
+                match level {
+                    "FINE" => {
+                        editor.highlight_text::<FineLog>(
+                            vec![range.clone()],
+                            HighlightStyle {
+                                color: Some(gpui::hsla(0.5, 0.0, 0.8, 1.0)),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    }
+                    "INFO" => {
+                        editor.highlight_text::<InfoLog>(
+                            vec![range.clone()],
+                            HighlightStyle {
+                                color: Some(gpui::hsla(0.58, 1.0, 0.6, 1.0)),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    }
+                    "WARNING" => {
+                        editor.highlight_text::<WarningLog>(
+                            vec![range.clone()],
+                            HighlightStyle {
+                                color: Some(gpui::hsla(0.13, 1.0, 0.55, 1.0)),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    }
+                    "SEVERE" | "SHOUT" | "ERROR" => {
+                        editor.highlight_text::<SevereLog>(
+                            vec![range.clone()],
+                            HighlightStyle {
+                                color: Some(gpui::hsla(0.0, 0.9, 0.55, 1.0)),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    }
+                    _ => {}
+                }
+
+                // Add Name Inlay
+                if let Some(meta) = meta {
+                    if let Some(name) = &meta.logger_name {
+                        let id = InlayId::LogName(self.next_inlay_id);
+                        self.next_inlay_id += 1;
+                        let position = snapshot.anchor_at(start, Bias::Left);
+                        editor.splice_inlays(&[], vec![Inlay {
+                            id,
+                            position,
+                            content: InlayContent::Text(Rope::from(format!("{} ", name))),
+                        }], cx);
+                    }
+                }
+            });
+        }
+
         if self.auto_scroll {
-            self.list_state.scroll_to_reveal_item(self.logs.len().saturating_sub(1));
+            self.editor.update(cx, |editor, cx| {
+                editor.request_autoscroll(Autoscroll::newest(), cx);
+            });
         }
         cx.notify();
     }
 
-    fn clear_logs(&mut self, cx: &mut Context<Self>) {
-        self.logs.clear();
-        self.list_state.reset(0);
-        cx.notify();
-    }
     
     fn toggle_auto_scroll(&mut self, checked: bool, cx: &mut Context<Self>) {
         self.auto_scroll = checked;
         if checked {
-            self.list_state.scroll_to_reveal_item(self.logs.len().saturating_sub(1));
+            self.editor.update(cx, |editor: &mut Editor, cx| {
+                editor.request_autoscroll(Autoscroll::newest(), cx);
+            });
         }
         cx.notify();
     }
 
-    fn render_log_entry(&self, ix: usize, _cx: &App) -> AnyElement {
-        if let Some(entry) = self.logs.get(ix) {
-             let color = match entry.level.as_str() {
-                "SEVERE" | "SHOUT" => gpui::red(),
-                "WARNING" => gpui::yellow(),
-                "INFO" => gpui::blue(),
-                _ => gpui::rgb(0xcccccc).into(), // Default gray
-             };
-             
-             div()
-                .flex()
-                .flex_row()
-                .items_start()
-                .px_2()
-                .py_0p5()
-                .text_sm()
-                .child(
-                    div()
-                        .w_24()
-                        .flex_none()
-                        .text_color(gpui::rgb(0x666666))
-                        .child(entry.timestamp.format("%H:%M:%S%.3f").to_string())
-                )
-                 .child(
-                    div()
-                        .w_16()
-                        .flex_none()
-                        .text_color(color)
-                        .child(entry.level.clone())
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(if entry.level == "ERROR" { gpui::red() } else { gpui::rgb(0xcccccc).into() })
-                        .child(entry.message.clone())
-                        .cursor_text()
-                )
-                .into_any()
-        } else {
-            div().into_any()
-        }
-    }
 
     #[allow(dead_code)]
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.clear_logs(cx);
         self.connection_task = None;
         self.connect(cx);
+        cx.notify();
+    }
+
+    pub fn clear_logs(&mut self, cx: &mut Context<Self>) {
+        self.metadata.clear();
+        self.next_inlay_id = 0;
+        self.active_timestamp_inlay = None;
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                let len = buffer.read(cx).len();
+                buffer.edit([(MultiBufferOffset(0)..len, "")], None, cx);
+            });
+            editor.splice_inlays(&[], Vec::new(), cx);
+        });
+        self.fine_ranges.clear();
+        self.info_ranges.clear();
+        self.warning_ranges.clear();
+        self.severe_ranges.clear();
         cx.notify();
     }
 }
@@ -353,50 +501,67 @@ impl gpui::Focusable for FlutterLogPanel {
 
 impl Render for FlutterLogPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_bg = cx.theme().colors().surface_background;
-        let header_bg = cx.theme().colors().title_bar_background;
-        let weak_view = cx.weak_entity();
+        let theme = cx.theme();
 
         div()
             .flex()
             .flex_col()
-            .bg(theme_bg)
             .size_full()
-            .track_focus(&self.focus_handle)
+            .bg(theme.colors().editor_background)
             .child(
-                div()
-                    .flex()
+                h_flex()
                     .items_center()
                     .justify_between()
                     .px_2()
                     .py_1()
-                    .bg(header_bg)
                     .child(
                          div().flex().items_center().gap_2()
                             .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).child("Flutter Logs"))
                             .child(
+                                IconButton::new("hot-reload", IconName::BoltFilled)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|window, cx| Tooltip::text("Hot Reload")(window, cx))
+                                .on_click(cx.listener(|_this, _, window, cx| {
+                                    window.dispatch_action(HotReload.boxed_clone(), cx);
+                                }))
+                            )
+                            .child(
+                                IconButton::new("hot-restart", IconName::RotateCw)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|window, cx| Tooltip::text("Hot Restart")(window, cx))
+                                    .on_click(cx.listener(|_this, _, window, cx| {
+                                        window.dispatch_action(HotRestart.boxed_clone(), cx);
+                                    }))
+                            )
+                            .child(div().w_px().h_4().bg(theme.colors().border).mx_1())
+                            .child(
                                 IconButton::new("clear_logs", IconName::Trash)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Clear Logs"))
+                                    .tooltip(|window, cx| Tooltip::text("Clear Logs")(window, cx))
                                     .on_click(cx.listener(|this, _, _window, cx| this.clear_logs(cx)))
                             )
                      )
                     .child(
                         div().flex().items_center().gap_4()
                             .child(
-                                Checkbox::new(
-                                    "auto_scroll",
-                                    if self.auto_scroll { ToggleState::Selected } else { ToggleState::Unselected }
-                                )
-                                .label("Auto-scroll")
-                                .on_click(cx.listener(|this, selection, _window, cx| {
-                                    this.toggle_auto_scroll(*selection == ToggleState::Selected, cx);
-                                }))
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Checkbox::new(
+                                            "auto_scroll",
+                                            if self.auto_scroll { ToggleState::Selected } else { ToggleState::Unselected }
+                                        )
+                                        .on_click(cx.listener(|this, selection, _window, cx| {
+                                            this.toggle_auto_scroll(*selection == ToggleState::Selected, cx);
+                                        }))
+                                    )
+                                    .child(div().text_xs().text_color(theme.colors().text_muted).child("Auto-scroll"))
                             )
                             .child(
                                 div()
+                                    .mr_2()
                                     .text_xs()
-                                    .text_color(gpui::rgb(0x888888))
+                                    .text_color(theme.colors().text_muted)
                                     .child(if self.vm_service_uri.is_some() {
                                         "Connected"
                                     } else {
@@ -407,21 +572,9 @@ impl Render for FlutterLogPanel {
             )
             .child(
                 div()
-                    .id("flutter_logs")
-                    .flex()
-                    .flex_col()
                     .flex_grow()
-                    // virtual list handles scrolling
-                    .child(
-                        list(self.list_state.clone(), move |ix, _, cx| {
-                            if let Some(view) = weak_view.upgrade() {
-                                view.read(cx).render_log_entry(ix, cx)
-                            } else {
-                                div().into_any()
-                            }
-                        })
-                        .size_full()
-                    )
+                    .h_full()
+                    .child(self.editor.clone())
             )
     }
 }

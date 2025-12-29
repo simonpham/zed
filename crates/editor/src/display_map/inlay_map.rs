@@ -23,7 +23,7 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::{ChunkBitmaps, Patch};
-use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
+use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div, h_flex};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
@@ -334,6 +334,48 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                    InlayId::LogName(_) => {
+                        let text = inlay.text().to_string();
+                        renderer = Some(ChunkRenderer {
+                            id: ChunkRendererId::Inlay(inlay.id),
+                            render: Arc::new(move |cx| {
+                                h_flex()
+                                    .items_center()
+                                    .px_2()
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().element_background)
+                                    .mr_2()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .child(text.clone())
+                                    )
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                            measured_width: None,
+                        });
+                        None
+                    }
+                    InlayId::LogTimestamp(_) => {
+                        let text = inlay.text().to_string();
+                        renderer = Some(ChunkRenderer {
+                            id: ChunkRendererId::Inlay(inlay.id),
+                            render: Arc::new(move |cx| {
+                                h_flex()
+                                    .w_full()
+                                    .justify_end()
+                                    .text_xs()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(text.clone())
+                                    .into_any_element()
+                            }),
+                            constrain_width: true,
+                            measured_width: None,
+                        });
+                        None
+                    }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {

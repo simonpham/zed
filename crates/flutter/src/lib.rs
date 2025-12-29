@@ -12,7 +12,7 @@ pub use log_view::FlutterLogPanel;
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         if let Some(window) = window {
-            let panel = cx.new(|cx| FlutterLogPanel::new(workspace, cx));
+            let panel = cx.new(|cx| FlutterLogPanel::new(workspace, window, cx));
             workspace.add_panel(panel, window, cx);
         }
 
@@ -106,8 +106,13 @@ fn hot_reload(workspace: &mut Workspace, _: &HotReload, _: &mut Window, cx: &mut
     send_to_flutter_terminals(workspace, "r", cx);
 }
 
-fn hot_restart(workspace: &mut Workspace, _: &HotRestart, _: &mut Window, cx: &mut Context<Workspace>) {
+fn hot_restart(workspace: &mut Workspace, _: &HotRestart, _window: &mut Window, cx: &mut Context<Workspace>) {
     send_to_flutter_terminals(workspace, "R", cx);
+    if let Some(panel) = workspace.panel::<FlutterLogPanel>(cx) {
+        panel.update(cx, |view, cx| {
+            view.clear_logs(cx);
+        });
+    }
 }
 
 fn open_flutter_logs(workspace: &mut Workspace, _: &OpenFlutterLogs, window: &mut Window, cx: &mut Context<Workspace>) {
