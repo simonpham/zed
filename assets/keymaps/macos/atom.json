@@ -19,7 +19,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-shift-l": "language_selector::Toggle",
-      "cmd-|": "pane::RevealInProjectPanel",
+      // "cmd-|": "pane::RevealInProjectPanel",
       "cmd-b": "editor::GoToDefinition",
       "alt-cmd-b": "editor::GoToDefinitionSplit",
       "cmd-<": "editor::ScrollCursorCenter",
@@ -31,7 +31,7 @@
       "cmd-shift-d": "editor::DuplicateLineDown",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",
-      "cmd-\\": "workspace::ToggleLeftDock",
+      // "cmd-\\": "workspace::ToggleLeftDock",
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide",
       "cmd-r": "outline::Toggle",
     },
@@ -48,7 +48,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-\\": "workspace::ToggleLeftDock",
+      // "cmd-\\": "workspace::ToggleLeftDock",
       "cmd-k cmd-b": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
       "cmd-shift-r": "project_symbols::Toggle",
