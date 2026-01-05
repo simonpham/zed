@@ -219,14 +219,8 @@ impl FlutterLogPanel {
                                                      }
                                                      return;
                                                 }
-                                                Ok(Err(e)) => {
-                                                    if attempts % 5 == 0 { 
-                                                         if let Some(view) = weak_view.upgrade() {
-                                                             view.update(&mut cx, |view, cx| {
-                                                                 view.add_log(format!("Connection failed to {}: {}", ws_uri, e), "ERROR", None, cx);
-                                                             }).log_err();
-                                                         }
-                                                    }
+                                                Ok(Err(_e)) => {
+                                                    // Silently retry - VM service not ready yet
                                                 }
                                                 Err(e) => {
                                                      if let Some(view) = weak_view.upgrade() {
@@ -610,7 +604,7 @@ impl FlutterLogPanel {
                             let should_break = matches!(event, ProcessEvent::Exited);
                             view.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
                                 match event {
-                                    ProcessEvent::Stdout(msg) => view.add_log(msg, "FINE", Some("stdout".to_string()), cx),
+                                    ProcessEvent::Stdout(msg) => view.add_log(msg, "FINE", Some("Flutter".to_string()), cx),
                                     ProcessEvent::Stderr(msg) => view.add_log(msg, "WARNING", Some("stderr".to_string()), cx),
                                     ProcessEvent::Error(msg) => {
                                         view.add_log(msg, "ERROR", Some("flutter".to_string()), cx);
