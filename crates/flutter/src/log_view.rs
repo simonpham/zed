@@ -521,8 +521,15 @@ impl FlutterLogPanel {
             self.set_search_path(path, cx);
         }
 
+        // Detect FVM usage early to show in log
+        // Check for .fvm/fvm_config.json (older FVM) or .fvm/version (newer FVM)
+        let use_fvm = cwd_path.as_ref()
+            .map(|p| p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists())
+            .unwrap_or(false);
+        
+        let cmd_prefix = if use_fvm { "fvm flutter" } else { "flutter" };
         self.add_log(
-            format!("Starting flutter run -d {} -t {}", device_id, target),
+            format!("Starting {} run -d {} -t {}", cmd_prefix, device_id, target),
             "INFO",
             Some("flutter".to_string()),
             cx,
@@ -535,17 +542,37 @@ impl FlutterLogPanel {
             let mut cx = cx.clone();
             let tx_spawn = tx.clone();
             async move {
-                let mut cmd = Command::new("flutter");
-                cmd.args([
-                    "run",
-                    "-d",
-                    &device_id,
-                    "-t",
-                    &target,
-                    "--vmservice-out-file=.dart_tool/flutter_url",
-                ]);
+                // Detect FVM usage by checking for .fvm/fvm_config.json (older) or .fvm/version (newer)
+                let use_fvm = cwd_path.as_ref()
+                    .map(|p| p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists())
+                    .unwrap_or(false);
 
-                if let Some(cwd) = cwd_path {
+                let mut cmd = if use_fvm {
+                    let mut c = Command::new("fvm");
+                    c.args([
+                        "flutter",
+                        "run",
+                        "-d",
+                        &device_id,
+                        "-t",
+                        &target,
+                        "--vmservice-out-file=.dart_tool/flutter_url",
+                    ]);
+                    c
+                } else {
+                    let mut c = Command::new("flutter");
+                    c.args([
+                        "run",
+                        "-d",
+                        &device_id,
+                        "-t",
+                        &target,
+                        "--vmservice-out-file=.dart_tool/flutter_url",
+                    ]);
+                    c
+                };
+
+                if let Some(ref cwd) = cwd_path {
                     cmd.current_dir(cwd);
                 }
 
