@@ -708,6 +708,7 @@ impl Render for FlutterLogPanel {
                             .child(
                                 IconButton::new("hot-reload", IconName::BoltFilled)
                                     .icon_size(IconSize::Small)
+                                    .disabled(!self.is_running())
                                     .tooltip(|window, cx| Tooltip::text("Hot Reload")(window, cx))
                                 .on_click(cx.listener(|_this, _, window, cx| {
                                     window.dispatch_action(HotReload.boxed_clone(), cx);
@@ -716,6 +717,7 @@ impl Render for FlutterLogPanel {
                             .child(
                                 IconButton::new("hot-restart", IconName::RotateCw)
                                     .icon_size(IconSize::Small)
+                                    .disabled(!self.is_running())
                                     .tooltip(|window, cx| Tooltip::text("Hot Restart")(window, cx))
                                     .on_click(cx.listener(|_this, _, window, cx| {
                                         window.dispatch_action(HotRestart.boxed_clone(), cx);
