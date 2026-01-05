@@ -607,7 +607,7 @@ pub mod flutter {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(flutter, [HotReload, HotRestart, OpenFlutterLogs]);
+    actions!(flutter, [HotReload, HotRestart, OpenFlutterLogs, FlutterStop]);
 
     #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
     #[action(namespace = flutter)]

@@ -8,7 +8,7 @@ use ui::ContextMenu;
 use ui::prelude::*;
 use ui::{Button, ButtonStyle, IconButton, IconName, IconSize, PopoverMenu, Tooltip};
 use util::ResultExt;
-use zed_actions::flutter::{HotReload, HotRestart};
+use zed_actions::flutter::{FlutterStop, HotReload, HotRestart};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +31,7 @@ pub struct FlutterControls {
     worktree_root: Option<std::path::PathBuf>,
     is_loading_devices: bool,
     is_loading_targets: bool,
+    is_running: bool,
     fetch_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -46,6 +47,7 @@ impl FlutterControls {
             worktree_root: None,
             is_loading_devices: true,
             is_loading_targets: true,
+            is_running: false,
             fetch_task: None,
             _subscriptions: Vec::new(),
         };
@@ -227,12 +229,18 @@ impl Render for FlutterControls {
         };
 
         let this = cx.entity().downgrade();
+        let this_for_open = this.clone();
         h_flex()
             .gap_1()
             .child({
                 let devices = devices.clone();
                 let this = this.clone();
                 PopoverMenu::new("device-picker")
+                    .on_open(std::rc::Rc::new(move |_window, cx| {
+                        this_for_open.update(cx, |controls, cx| {
+                            controls.refresh_devices(cx);
+                        }).log_err();
+                    }))
                     .trigger(
                         Button::new("device-picker-trigger", device_name)
                             .style(ButtonStyle::Subtle),
@@ -303,37 +311,57 @@ impl Render for FlutterControls {
                 let selected_device = self.selected_device.clone();
                 let selected_target = self.selected_target.clone();
                 let worktree_root = self.worktree_root.clone();
-                IconButton::new("flutter-run", IconName::PlayFilled)
-                    .icon_size(IconSize::Small)
-                    .tooltip(|window, cx| Tooltip::text("Run Flutter")(window, cx))
-                    .on_click(move |_event, window, cx| {
-                        let (cwd, relative_target) = selected_target
-                            .as_ref()
-                            .map(|target| {
-                                let path = std::path::Path::new(target);
-                                let lib_dir = path.parent();
-                                let filename = path.file_name().and_then(|f| f.to_str());
-                                let pkg_relative = lib_dir.and_then(|lib| lib.parent());
-                                let abs_cwd = pkg_relative.and_then(|pkg| {
-                                    worktree_root
-                                        .as_ref()
-                                        .map(|root| root.join(pkg).to_string_lossy().to_string())
-                                });
-                                let rel_target = filename.map(|f| format!("lib/{}", f));
-                                (abs_cwd, rel_target)
-                            })
-                            .unwrap_or((None, None));
+                let is_running = self.is_running;
+                let this = this.clone();
+                if is_running {
+                    IconButton::new("flutter-stop", IconName::Stop)
+                        .icon_size(IconSize::Small)
+                        .tooltip(|window, cx| Tooltip::text("Stop Flutter")(window, cx))
+                        .on_click(move |_event, window, cx| {
+                            this.update(cx, |controls, cx| {
+                                controls.is_running = false;
+                                cx.notify();
+                            }).log_err();
+                            window.dispatch_action(FlutterStop.boxed_clone(), cx);
+                        })
+                } else {
+                    let this = this.clone();
+                    IconButton::new("flutter-run", IconName::PlayFilled)
+                        .icon_size(IconSize::Small)
+                        .tooltip(|window, cx| Tooltip::text("Run Flutter")(window, cx))
+                        .on_click(move |_event, window, cx| {
+                            this.update(cx, |controls, cx| {
+                                controls.is_running = true;
+                                cx.notify();
+                            }).log_err();
+                            let (cwd, relative_target) = selected_target
+                                .as_ref()
+                                .map(|target| {
+                                    let path = std::path::Path::new(target);
+                                    let lib_dir = path.parent();
+                                    let filename = path.file_name().and_then(|f| f.to_str());
+                                    let pkg_relative = lib_dir.and_then(|lib| lib.parent());
+                                    let abs_cwd = pkg_relative.and_then(|pkg| {
+                                        worktree_root
+                                            .as_ref()
+                                            .map(|root| root.join(pkg).to_string_lossy().to_string())
+                                    });
+                                    let rel_target = filename.map(|f| format!("lib/{}", f));
+                                    (abs_cwd, rel_target)
+                                })
+                                .unwrap_or((None, None));
 
-                        window.dispatch_action(
-                            zed_actions::flutter::FlutterRun {
-                                device_id: selected_device.as_ref().map(|d| d.id.clone()),
-                                target: relative_target,
-                                cwd,
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    })
+                            window.dispatch_action(
+                                zed_actions::flutter::FlutterRun {
+                                    device_id: selected_device.as_ref().map(|d| d.id.clone()),
+                                    target: relative_target,
+                                    cwd,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            );
+                        })
+                }
             })
             .child(
                 IconButton::new("hot-reload", IconName::BoltFilled)

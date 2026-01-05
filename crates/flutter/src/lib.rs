@@ -2,7 +2,7 @@ use gpui::{App, AppContext as _, Context, Window};
 use terminal_view::terminal_panel::TerminalPanel;
 use terminal::Terminal;
 use workspace::Workspace;
-use zed_actions::flutter::{HotReload, HotRestart, FlutterRun, OpenFlutterLogs};
+use zed_actions::flutter::{HotReload, HotRestart, FlutterRun, FlutterStop, OpenFlutterLogs};
 
 mod log_view;
 mod vm_service;
@@ -19,6 +19,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(hot_reload);
         workspace.register_action(hot_restart);
         workspace.register_action(flutter_run);
+        workspace.register_action(flutter_stop);
         workspace.register_action(open_flutter_logs);
     })
     .detach();
@@ -113,6 +114,10 @@ fn hot_restart(workspace: &mut Workspace, _: &HotRestart, _window: &mut Window, 
             view.clear_logs(cx);
         });
     }
+}
+
+fn flutter_stop(workspace: &mut Workspace, _: &FlutterStop, _window: &mut Window, cx: &mut Context<Workspace>) {
+    send_to_flutter_terminals(workspace, "q", cx);
 }
 
 fn open_flutter_logs(workspace: &mut Workspace, _: &OpenFlutterLogs, window: &mut Window, cx: &mut Context<Workspace>) {

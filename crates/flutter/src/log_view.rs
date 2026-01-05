@@ -376,50 +376,56 @@ impl FlutterLogPanel {
                 let snapshot = buffer.snapshot(cx);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
 
-                // Highlight based on level
+                // Accumulate range for highlighting based on level
                 match level {
                     "FINE" => {
-                        editor.highlight_text::<FineLog>(
-                            vec![range.clone()],
-                            HighlightStyle {
-                                color: Some(gpui::hsla(0.5, 0.0, 0.8, 1.0)),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
+                        self.fine_ranges.push(range.clone());
                     }
                     "INFO" => {
-                        editor.highlight_text::<InfoLog>(
-                            vec![range.clone()],
-                            HighlightStyle {
-                                color: Some(gpui::hsla(0.58, 1.0, 0.6, 1.0)),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
+                        self.info_ranges.push(range.clone());
                     }
                     "WARNING" => {
-                        editor.highlight_text::<WarningLog>(
-                            vec![range.clone()],
-                            HighlightStyle {
-                                color: Some(gpui::hsla(0.13, 1.0, 0.55, 1.0)),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
+                        self.warning_ranges.push(range.clone());
                     }
                     "SEVERE" | "SHOUT" | "ERROR" => {
-                        editor.highlight_text::<SevereLog>(
-                            vec![range.clone()],
-                            HighlightStyle {
-                                color: Some(gpui::hsla(0.0, 0.9, 0.55, 1.0)),
-                                ..Default::default()
-                            },
-                            cx,
-                        );
+                        self.severe_ranges.push(range.clone());
                     }
                     _ => {}
                 }
+
+                // Apply all accumulated highlights
+                editor.highlight_text::<FineLog>(
+                    self.fine_ranges.clone(),
+                    HighlightStyle {
+                        color: Some(gpui::hsla(0.5, 0.0, 0.8, 1.0)),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                editor.highlight_text::<InfoLog>(
+                    self.info_ranges.clone(),
+                    HighlightStyle {
+                        color: Some(gpui::hsla(0.58, 1.0, 0.6, 1.0)),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                editor.highlight_text::<WarningLog>(
+                    self.warning_ranges.clone(),
+                    HighlightStyle {
+                        color: Some(gpui::hsla(0.13, 1.0, 0.55, 1.0)),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                editor.highlight_text::<SevereLog>(
+                    self.severe_ranges.clone(),
+                    HighlightStyle {
+                        color: Some(gpui::hsla(0.0, 0.9, 0.55, 1.0)),
+                        ..Default::default()
+                    },
+                    cx,
+                );
 
                 // Add Name Inlay
                 if let Some(meta) = meta {
