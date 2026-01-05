@@ -523,9 +523,19 @@ impl FlutterLogPanel {
 
         // Detect FVM usage early to show in log
         // Check for .fvm/fvm_config.json (older FVM) or .fvm/version (newer FVM)
-        let use_fvm = cwd_path.as_ref()
-            .map(|p| p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists())
-            .unwrap_or(false);
+        // Walk up from cwd to find .fvm in any parent directory
+        let use_fvm = cwd_path.as_ref().map(|start_path| {
+            let mut current = start_path.as_path();
+            loop {
+                if current.join(".fvm/fvm_config.json").exists() || current.join(".fvm/version").exists() {
+                    return true;
+                }
+                match current.parent() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            }
+        }).unwrap_or(false);
         
         let cmd_prefix = if use_fvm { "fvm flutter" } else { "flutter" };
         self.add_log(
@@ -543,9 +553,19 @@ impl FlutterLogPanel {
             let tx_spawn = tx.clone();
             async move {
                 // Detect FVM usage by checking for .fvm/fvm_config.json (older) or .fvm/version (newer)
-                let use_fvm = cwd_path.as_ref()
-                    .map(|p| p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists())
-                    .unwrap_or(false);
+                // Walk up from cwd to find .fvm in any parent directory
+                let use_fvm = cwd_path.as_ref().map(|start_path| {
+                    let mut current = start_path.as_path();
+                    loop {
+                        if current.join(".fvm/fvm_config.json").exists() || current.join(".fvm/version").exists() {
+                            return true;
+                        }
+                        match current.parent() {
+                            Some(parent) => current = parent,
+                            None => return false,
+                        }
+                    }
+                }).unwrap_or(false);
 
                 let mut cmd = if use_fvm {
                     let mut c = Command::new("fvm");
