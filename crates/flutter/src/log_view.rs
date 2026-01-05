@@ -41,6 +41,7 @@ pub struct FlutterLogPanel {
     severe_ranges: Vec<std::ops::Range<editor::Anchor>>,
     run_process: Option<std::sync::Arc<std::sync::Mutex<Option<Child>>>>,
     run_task: Option<Task<()>>,
+    vm_connected: bool,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -99,6 +100,7 @@ impl FlutterLogPanel {
             severe_ranges: Vec::new(),
             run_process: None,
             run_task: None,
+            vm_connected: false,
             _subscriptions,
         }
     }
@@ -214,6 +216,7 @@ impl FlutterLogPanel {
                                                 Ok(Ok(service)) => {
                                                      if let Some(view) = weak_view.upgrade() {
                                                          view.update(&mut cx, |view, cx| {
+                                                             view.add_log(format!("VM service connected at {}", ws_uri), "INFO", None, cx);
                                                              view.handle_connection(service, ws_uri.clone(), cx);
                                                          }).log_err();
                                                      }
@@ -276,6 +279,7 @@ impl FlutterLogPanel {
 
     fn handle_connection(&mut self, mut service: DartVmService, uri: String, cx: &mut Context<Self>) {
         self.vm_service_uri = Some(uri);
+        self.vm_connected = true;
         let weak_view = cx.weak_entity();
         
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
@@ -609,7 +613,23 @@ impl FlutterLogPanel {
                             let should_break = matches!(event, ProcessEvent::Exited);
                             view.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
                                 match event {
-                                    ProcessEvent::Stdout(msg) => view.add_log(msg, "FINE", Some("Flutter".to_string()), cx),
+                                    ProcessEvent::Stdout(msg) => {
+                                        // After VM is connected, filter to only show important messages
+                                        if view.vm_connected {
+                                            let should_show = msg.contains("Performing hot reload")
+                                                || msg.contains("Performing hot restart")
+                                                || msg.contains("Reloaded")
+                                                || msg.contains("Restarted application")
+                                                || msg.contains("Try again after fixing")
+                                                || msg.contains("Error:")
+                                                || msg.contains("Exception:");
+                                            if should_show {
+                                                view.add_log(msg, "INFO", Some("Flutter".to_string()), cx);
+                                            }
+                                        } else {
+                                            view.add_log(msg, "FINE", Some("Flutter".to_string()), cx);
+                                        }
+                                    }
                                     ProcessEvent::Stderr(msg) => view.add_log(msg, "WARNING", Some("stderr".to_string()), cx),
                                     ProcessEvent::Error(msg) => {
                                         view.add_log(msg, "ERROR", Some("flutter".to_string()), cx);
@@ -648,6 +668,7 @@ impl FlutterLogPanel {
         self.run_task = None;
         self.connection_task = None;
         self.vm_service_uri = None;
+        self.vm_connected = false;
         cx.notify();
     }
 
