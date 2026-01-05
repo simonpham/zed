@@ -507,6 +507,7 @@ impl FlutterLogPanel {
         device_id: String,
         target: String,
         cwd: Option<String>,
+        workspace_roots: Vec<std::path::PathBuf>,
         cx: &mut Context<Self>,
     ) {
         self.stop_run(cx);
@@ -524,12 +525,6 @@ impl FlutterLogPanel {
         // Detect FVM usage early to show in log
         // Check for .fvm/fvm_config.json (older FVM) or .fvm/version (newer FVM)
         // Check both target folder and workspace root
-        let workspace_roots: Vec<std::path::PathBuf> = self.workspace.upgrade()
-            .map(|ws| ws.read(cx).worktrees(cx)
-                .map(|wt| wt.read(cx).abs_path().to_path_buf())
-                .collect())
-            .unwrap_or_default();
-        
         let check_fvm_in_path = |p: &std::path::Path| -> bool {
             p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists()
         };

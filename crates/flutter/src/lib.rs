@@ -27,10 +27,15 @@ fn flutter_run(workspace: &mut Workspace, action: &FlutterRun, window: &mut Wind
     let device_id = action.device_id.clone().unwrap_or_else(|| "macos".to_string());
     let target = action.target.clone().unwrap_or_else(|| "lib/main.dart".to_string());
     let cwd = action.cwd.clone();
+    
+    // Get workspace roots before updating panel to avoid re-entrant read panic
+    let workspace_roots: Vec<std::path::PathBuf> = workspace.worktrees(cx)
+        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+        .collect();
 
     if let Some(panel) = workspace.panel::<FlutterLogPanel>(cx) {
         panel.update(cx, |view, cx| {
-            view.start_run(device_id, target, cwd, cx);
+            view.start_run(device_id, target, cwd, workspace_roots, cx);
         });
         workspace.toggle_panel_focus::<FlutterLogPanel>(window, cx);
     }
