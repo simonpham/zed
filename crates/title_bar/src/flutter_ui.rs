@@ -57,7 +57,6 @@ impl FlutterControls {
     }
 
     fn refresh_devices(&mut self, cx: &mut Context<Self>) {
-        self.is_loading_devices = true;
         self.fetch_task = Some(cx.spawn(async move |this, cx| {
             let output = cx
                 .background_executor()
