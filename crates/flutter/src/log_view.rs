@@ -523,19 +523,19 @@ impl FlutterLogPanel {
 
         // Detect FVM usage early to show in log
         // Check for .fvm/fvm_config.json (older FVM) or .fvm/version (newer FVM)
-        // Walk up from cwd to find .fvm in any parent directory
-        let use_fvm = cwd_path.as_ref().map(|start_path| {
-            let mut current = start_path.as_path();
-            loop {
-                if current.join(".fvm/fvm_config.json").exists() || current.join(".fvm/version").exists() {
-                    return true;
-                }
-                match current.parent() {
-                    Some(parent) => current = parent,
-                    None => return false,
-                }
-            }
-        }).unwrap_or(false);
+        // Check both target folder and workspace root
+        let workspace_roots: Vec<std::path::PathBuf> = self.workspace.upgrade()
+            .map(|ws| ws.read(cx).worktrees(cx)
+                .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                .collect())
+            .unwrap_or_default();
+        
+        let check_fvm_in_path = |p: &std::path::Path| -> bool {
+            p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists()
+        };
+        
+        let use_fvm = cwd_path.as_ref().map(|p| check_fvm_in_path(p)).unwrap_or(false)
+            || workspace_roots.iter().any(|p| check_fvm_in_path(p));
         
         let cmd_prefix = if use_fvm { "fvm flutter" } else { "flutter" };
         self.add_log(
@@ -553,19 +553,12 @@ impl FlutterLogPanel {
             let tx_spawn = tx.clone();
             async move {
                 // Detect FVM usage by checking for .fvm/fvm_config.json (older) or .fvm/version (newer)
-                // Walk up from cwd to find .fvm in any parent directory
-                let use_fvm = cwd_path.as_ref().map(|start_path| {
-                    let mut current = start_path.as_path();
-                    loop {
-                        if current.join(".fvm/fvm_config.json").exists() || current.join(".fvm/version").exists() {
-                            return true;
-                        }
-                        match current.parent() {
-                            Some(parent) => current = parent,
-                            None => return false,
-                        }
-                    }
-                }).unwrap_or(false);
+                // Check both target folder and workspace roots
+                let check_fvm = |p: &std::path::Path| -> bool {
+                    p.join(".fvm/fvm_config.json").exists() || p.join(".fvm/version").exists()
+                };
+                let use_fvm = cwd_path.as_ref().map(|p| check_fvm(p)).unwrap_or(false)
+                    || workspace_roots.iter().any(|p| check_fvm(p));
 
                 let mut cmd = if use_fvm {
                     let mut c = Command::new("fvm");
