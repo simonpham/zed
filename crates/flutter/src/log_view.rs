@@ -18,6 +18,8 @@ use editor::ToPoint;
 use gpui::{Action, Entity, HighlightStyle};
 use language::language_settings::SoftWrap;
 use text::{Rope, Bias};
+use smol::io::{AsyncBufReadExt, BufReader};
+use smol::process::{Child, Command, Stdio};
 
 pub struct FlutterLogPanel {
     workspace: WeakEntity<Workspace>,
@@ -37,6 +39,8 @@ pub struct FlutterLogPanel {
     info_ranges: Vec<std::ops::Range<editor::Anchor>>,
     warning_ranges: Vec<std::ops::Range<editor::Anchor>>,
     severe_ranges: Vec<std::ops::Range<editor::Anchor>>,
+    run_process: Option<std::sync::Arc<std::sync::Mutex<Option<Child>>>>,
+    run_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -93,6 +97,8 @@ impl FlutterLogPanel {
             info_ranges: Vec::new(),
             warning_ranges: Vec::new(),
             severe_ranges: Vec::new(),
+            run_process: None,
+            run_task: None,
             _subscriptions,
         }
     }
@@ -275,7 +281,7 @@ impl FlutterLogPanel {
     }
 
     fn handle_connection(&mut self, mut service: DartVmService, uri: String, cx: &mut Context<Self>) {
-        self.vm_service_uri = Some(uri.clone());
+        self.vm_service_uri = Some(uri);
         let weak_view = cx.weak_entity();
         
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
@@ -379,16 +385,16 @@ impl FlutterLogPanel {
                 // Accumulate range for highlighting based on level
                 match level {
                     "FINE" => {
-                        self.fine_ranges.push(range.clone());
+                        self.fine_ranges.push(range);
                     }
                     "INFO" => {
-                        self.info_ranges.push(range.clone());
+                        self.info_ranges.push(range);
                     }
                     "WARNING" => {
-                        self.warning_ranges.push(range.clone());
+                        self.warning_ranges.push(range);
                     }
                     "SEVERE" | "SHOUT" | "ERROR" => {
-                        self.severe_ranges.push(range.clone());
+                        self.severe_ranges.push(range);
                     }
                     _ => {}
                 }
@@ -488,6 +494,181 @@ impl FlutterLogPanel {
         self.severe_ranges.clear();
         cx.notify();
     }
+
+    pub fn is_running(&self) -> bool {
+        self.run_process.is_some()
+    }
+
+    pub fn start_run(
+        &mut self,
+        device_id: String,
+        target: String,
+        cwd: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_run(cx);
+
+        let process_holder = std::sync::Arc::new(std::sync::Mutex::new(None::<Child>));
+        self.run_process = Some(process_holder.clone());
+
+        let cwd_path = cwd.map(std::path::PathBuf::from);
+        let search_path = cwd_path.clone();
+
+        if let Some(path) = search_path {
+            self.set_search_path(path, cx);
+        }
+
+        self.add_log(
+            format!("Starting flutter run -d {} -t {}", device_id, target),
+            "INFO",
+            Some("flutter".to_string()),
+            cx,
+        );
+
+        let weak = cx.weak_entity();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<ProcessEvent>();
+        
+        self.run_task = Some(cx.spawn(move |_this: gpui::WeakEntity<FlutterLogPanel>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            let tx_spawn = tx.clone();
+            async move {
+                let mut cmd = Command::new("flutter");
+                cmd.args([
+                    "run",
+                    "-d",
+                    &device_id,
+                    "-t",
+                    &target,
+                    "--vmservice-out-file=.dart_tool/flutter_url",
+                ]);
+
+                if let Some(cwd) = cwd_path {
+                    cmd.current_dir(cwd);
+                }
+
+                cmd.stdout(Stdio::piped());
+                cmd.stderr(Stdio::piped());
+                cmd.stdin(Stdio::piped());
+
+                let mut child = match cmd.spawn() {
+                    Ok(child) => child,
+                    Err(e) => {
+                        let _ = tx_spawn.unbounded_send(ProcessEvent::Error(format!("Failed to start flutter run: {}", e)));
+                        return;
+                    }
+                };
+
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+
+                {
+                    let mut guard = process_holder.lock().unwrap();
+                    *guard = Some(child);
+                }
+
+                let tx_stdout = tx_spawn.clone();
+                let stdout_task = cx.background_executor().spawn(async move {
+                    if let Some(stdout) = stdout {
+                        let mut reader = BufReader::new(stdout);
+                        let mut line = String::new();
+                        while let Ok(n) = reader.read_line(&mut line).await {
+                            if n == 0 {
+                                break;
+                            }
+                            let content = std::mem::take(&mut line);
+                            let _ = tx_stdout.unbounded_send(ProcessEvent::Stdout(content.trim_end().to_string()));
+                        }
+                    }
+                });
+
+                let tx_stderr = tx_spawn.clone();
+                let stderr_task = cx.background_executor().spawn(async move {
+                    if let Some(stderr) = stderr {
+                        let mut reader = BufReader::new(stderr);
+                        let mut line = String::new();
+                        while let Ok(n) = reader.read_line(&mut line).await {
+                            if n == 0 {
+                                break;
+                            }
+                            let content = std::mem::take(&mut line);
+                            let _ = tx_stderr.unbounded_send(ProcessEvent::Stderr(content.trim_end().to_string()));
+                        }
+                    }
+                });
+
+                let tx_exit = tx_spawn.clone();
+                let exit_task = async move {
+                    futures::future::join(stdout_task, stderr_task).await;
+                    let _ = tx_exit.unbounded_send(ProcessEvent::Exited);
+                };
+
+                let consumer_weak = weak.clone();
+                let consumer = async {
+                    use futures::StreamExt;
+                    while let Some(event) = rx.next().await {
+                        if let Some(view) = consumer_weak.upgrade() {
+                            let should_break = matches!(event, ProcessEvent::Exited);
+                            view.update(&mut cx, |view: &mut FlutterLogPanel, cx: &mut Context<FlutterLogPanel>| {
+                                match event {
+                                    ProcessEvent::Stdout(msg) => view.add_log(msg, "FINE", Some("stdout".to_string()), cx),
+                                    ProcessEvent::Stderr(msg) => view.add_log(msg, "WARNING", Some("stderr".to_string()), cx),
+                                    ProcessEvent::Error(msg) => {
+                                        view.add_log(msg, "ERROR", Some("flutter".to_string()), cx);
+                                        view.run_process = None;
+                                    }
+                                    ProcessEvent::Exited => {
+                                        view.add_log("Flutter process exited".to_string(), "INFO", Some("flutter".to_string()), cx);
+                                        view.run_process = None;
+                                    }
+                                }
+                            }).log_err();
+                            if should_break {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                };
+
+                futures::join!(exit_task, consumer);
+            }
+        }));
+
+        self.connect(cx);
+        cx.notify();
+    }
+
+    pub fn stop_run(&mut self, cx: &mut Context<Self>) {
+        if let Some(process_holder) = self.run_process.take() {
+            let mut guard = process_holder.lock().unwrap();
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+            }
+        }
+        self.run_task = None;
+        self.connection_task = None;
+        self.vm_service_uri = None;
+        cx.notify();
+    }
+
+    pub fn send_input(&self, text: &str) {
+        use smol::io::AsyncWriteExt;
+        if let Some(ref process_holder) = self.run_process {
+            let mut guard = process_holder.lock().unwrap();
+            if let Some(ref mut child) = *guard {
+                if let Some(ref mut stdin) = child.stdin {
+                    let bytes = text.as_bytes().to_vec();
+                    let stdin_ref = stdin as *mut smol::process::ChildStdin;
+                    smol::block_on(async {
+                        let stdin = unsafe { &mut *stdin_ref };
+                        let _ = stdin.write_all(&bytes).await;
+                        let _ = stdin.flush().await;
+                    });
+                }
+            }
+        }
+    }
 }
 
 enum LogEvent {
@@ -496,6 +677,13 @@ enum LogEvent {
     Disconnected,
     Error(String),
     Log(crate::vm_service::LogRecord),
+}
+
+enum ProcessEvent {
+    Stdout(String),
+    Stderr(String),
+    Error(String),
+    Exited,
 }
 
 
