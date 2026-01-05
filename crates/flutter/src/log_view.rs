@@ -445,6 +445,11 @@ impl FlutterLogPanel {
 
         if self.auto_scroll {
             self.editor.update(cx, |editor, cx| {
+                let end = editor.buffer().read(cx).read(cx).len();
+                let snapshot = editor.display_snapshot(cx);
+                editor.selections.change_with(&snapshot, |s| {
+                    s.select_ranges(vec![end..end]);
+                });
                 editor.request_autoscroll(Autoscroll::newest(), cx);
             });
         }
